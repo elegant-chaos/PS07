@@ -22,7 +22,7 @@ set.seed(76)
 library(tidyverse)
 library(broom)
 library(knitr)
-
+library(ggplot2)
 train <- read_csv("data/cs-training.csv") %>% 
   rename(Id = X1)
 test <- read_csv("data/cs-test.csv") %>% 
@@ -36,29 +36,79 @@ Information on the competition can be found [here](https://www.kaggle.com/c/Give
 
 # Collaboration
 
-Please indicate who you collaborated with on this assignment: 
+Please indicate who you collaborated with on this assignment:  
+*Quick Start Guide from course webpage
 
+#Exploratory Data Analysis
 
+```{r}
+#Distribution of outcome variable SeriousDlqin2yrs
+train <- train %>% mutate(cat_deliq = ifelse( SeriousDlqin2yrs == 1, "yes", "no"))
+ggplot(data=train, aes(x = cat_deliq)) + geom_bar() + ggtitle("Distribution of Serious Deliquency") + xlab("Serious Deliquency")
+
+#Building boxplots of DebtRatio, age, and MontlyIncome against SeriousDlqin2yrs
+
+#Adding 0.00001 to DebtRatio to enable taking the log (many zeros in DebtRatio)
+train <- train %>% mutate(log_debt_ratio = log(DebtRatio + 0.00001))
+
+#DebtRatio boxplot
+ggplot(data=train,aes(cat_deliq,log_debt_ratio)) + geom_boxplot() + xlab("Serious Deliquency") + ylab("Natural Log of Debt Ratio") + ggtitle("Boxplot of Serious Deliquency to Debt Ratio") + coord_flip()
+
+#age boxplot
+ggplot(data=train,aes(cat_deliq,age)) + geom_boxplot() + xlab("Serious Deliquency") + ylab("Age") + ggtitle("Boxplot of Serious Deliquency to Age") + coord_flip()
+
+#Adding 0.00001 to Monthly Income to enable taking the log
+train <- train %>% mutate(log_monthly_income = log(MonthlyIncome + 0.00001))
+
+#MonthlyIncome boxplot, generates warning message for rows with NA values
+ggplot(data=train,aes(cat_deliq,log_monthly_income)) + geom_boxplot() + xlab("Serious Deliquency") + ylab("Natural Log of Monthly Income") + ggtitle("Boxplot of Serious Deliquency to Monthly Income") + coord_flip()
+```
 
 # Build binary classifier
 
-Build the binary classifier based on a single predictor variable: `DebtRatio`,
-`age`, or `MonthlyIncome`. Justify this choice.
+Examining the 3 boxplots, age appears to have the largest mean difference with serious deliquency. For this reason, I've chosen age as the predictor.
 
 ```{r}
+model_formula <- as.formula(SeriousDlqin2yrs~age)
+model_logistic <- glm(model_formula, data=train, family="binomial")
 
+#Extract regression table in tidy format
+model_logistic %>% 
+  broom::tidy(conf.int=TRUE)
 ```
-
-
 
 # ROC curve
 
 Based on the ultimate classifier you choose, plot a corresponding ROC curve.
 
 ```{r}
+profiles_train_augmented <- model_logistic %>% 
+  broom::augment() %>% 
+  as_tibble() %>% 
+  mutate(p_hat = 1/(1+exp(-.fitted)))
 
+library(ROCR)
+# This bit of code computes the ROC curve
+pred <- prediction(predictions = profiles_train_augmented$p_hat, labels = profiles_train_augmented$SeriousDlqin2yrs)
+perf <- performance(pred, "tpr","fpr")
+
+# This bit of code computes the Area Under the Curve
+auc <- as.numeric(performance(pred,"auc")@y.values)
+auc
+
+# This bit of code prints it
+plot(perf, main=paste("Area Under the Curve =", round(auc, 3)))
+abline(c(0, 1), lty=2)
 ```
 
+#Making submission file
+```{r}
+final <- predict(model_logistic,test) 
+final <- final %>% as_tibble() %>% mutate(Probability = 1/(1+exp(-value))) 
+final <- final %>% rownames_to_column(var = "ID")
+final_submission <- final %>% select(ID,Probability)
+write_csv(final_submission, "submission.csv")
+```
 
 
 # ROC curve for random guessing
@@ -67,5 +117,16 @@ Instead of using any predictor information as you did above, switch your
 predictions to random guesses and plot the resulting ROC curve.
 
 ```{r}
+#Generating random guesses
+random_guesses <- rbinom(150000, 1, 0.5)
+pred2 <- prediction(predictions = random_guesses, labels = profiles_train_augmented$SeriousDlqin2yrs)
+perf <- performance(pred2, "tpr","fpr")
 
+# This bit of code computes the Area Under the Curve
+auc2 <- as.numeric(performance(pred2,"auc")@y.values)
+auc2
+
+# This bit of code prints it
+plot(perf, main=paste("Area Under the Curve =", round(auc2, 3)))
+abline(c(0, 1), lty=2)
 ```
